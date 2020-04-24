@@ -4,14 +4,16 @@ use std::path::Path;
 /// https://www.gnu.org/software/libc/manual/html_node/Process-Identification.html
 pub struct Pid(u32);
 
-pub fn ofile<P: AsRef<Path>>(path: P) -> Option<Vec<Pid>> {
+/// Given a file path, return the process id of any processes that have an open file descriptor
+/// pointing to the given file.
+pub fn opath<P: AsRef<Path>>(path: P) -> Option<Vec<Pid>> {
     None
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ofile;
-    use std::io::{self, Write};
+    use super::opath;
+    use std::io::Write;
 
     use nix::unistd::{fork, ForkResult};
     use rusty_fork::rusty_fork_id;
@@ -19,6 +21,7 @@ mod tests {
     use rusty_fork::rusty_fork_test_name;
     use tempfile::NamedTempFile;
 
+    // TODO: test symlink, socket file, directory
 
     #[test]
     fn it_works() {
@@ -32,7 +35,7 @@ mod tests {
 
         let p = file.path();
         
-        let ofile_pid = ofile(p).unwrap().pop().unwrap();
+        let ofile_pid = opath(p).unwrap().pop().unwrap();
 
         assert_eq!(ofile_pid.0, std::process::id());
     }
