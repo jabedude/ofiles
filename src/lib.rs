@@ -74,6 +74,8 @@ fn extract_socket_inode(line: &str) -> Result<Inode> {
     Ok(inode)
 }
 
+/// Search `/proc/net/unix` for the line containing `path_buf` and return the inode given 
+/// by the system.
 fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
     let f = File::open("/proc/net/unix")?;
     let f = BufReader::new(f);
