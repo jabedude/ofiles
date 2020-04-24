@@ -1,0 +1,6 @@
+language: rust
+before_install:
+  - sudo apt-get install ncat
+script:
+  - cargo build
+  - RUST_BACKTRACE=1 cargo test
