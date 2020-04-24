@@ -3,6 +3,13 @@ name = "ofiles"
 version = "0.1.0"
 authors = ["Joshua Abraham <sinisterpatrician@gmail.com>"]
 edition = "2018"
+description = "Identify processes that have opened files or sockets"
+keywords = ["filesystem", "sockets", "processes", "lsof", "fuser"]
+homepage = "https://github.com/jabedude/ofiles/"
+documentation = "https://docs.rs/ofiles"
+repository = "https://github.com/jabedude/ofiles/"
+readme = "README.md"
+license = "BSD-3-Clause"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
