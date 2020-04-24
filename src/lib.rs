@@ -179,7 +179,7 @@ mod tests {
         match fork() {
             Ok(ForkResult::Parent { child, .. }) => {
                 eprintln!("Child pid: {}", child);
-                let mut spawn = Command::new("ncat")
+                let mut spawn = Command::new("nc")
                                 .arg("-U")
                                 .arg(&path)
                                 .arg("-l")
