@@ -1,7 +1,9 @@
 # ofiles
 
-[![Build Status](https://travis-ci.org/jabedude/ofiles.svg?branch=master)](https://travis-ci.org/jabedude/ofiles)
-
+[![crates.io](https://img.shields.io/crates/v/ofiles.svg)](https://crates.io/crates/ofiles)
+![Rust](https://github.com/jabedude/ofiles/workflows/Rust/badge.svg)
+[![Documentation](https://docs.rs/ofiles/badge.svg)](https://docs.rs/ofiles/)
+[![license](https://img.shields.io/badge/license-BSD3.0-blue.svg)](https://github.com/jabedude/ofiles/LICENSE)
 
 A tiny library for determining what process has a file opened for reading/writing/etc. I wrote this for another project but I hope will be useful in other applications.
 
