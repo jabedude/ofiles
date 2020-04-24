@@ -1,11 +1,11 @@
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader};
-use std::os::unix::io::AsRawFd;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use error_chain;
 use glob::glob;
-use nix::sys::stat::{fstat, SFlag};
+use log::*;
+use nix::sys::stat::{lstat, SFlag};
 
 /// Newtype pattern to avoid type errors.
 /// https://www.gnu.org/software/libc/manual/html_node/Process-Identification.html
@@ -18,7 +18,6 @@ struct Inode(u64);
 impl Inode {
     pub fn contained_in(&self, other: &str) -> bool {
         let num_str: String = other.chars().filter(|x| x.is_numeric()).collect();
-        eprintln!("num str: {}", num_str);
         match num_str.parse::<u64>() {
             Ok(n) => n == self.0,
             Err(_) => false,
@@ -69,7 +68,6 @@ macro_rules! unwrap_or_continue {
 ///
 /// See man 5 proc.
 fn extract_socket_inode(line: &str) -> Result<Inode> {
-	eprintln!("line: {}", line);
     let elements: Vec<&str> = line.split(' ').collect();
     let inode = Inode(elements[6].parse::<u64>()?);
 
@@ -80,10 +78,9 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
     let f = File::open("/proc/net/unix")?;
     let f = BufReader::new(f);
 
-    eprintln!("PathBuf: {:?}", path_buf);
     for line in f.lines() {
         if let Ok(l) = line {
-            eprintln!("line: {:?}", l);
+            info!("line: {:?}", l);
             if l.contains(path_buf.to_str().unwrap()) {
                 let inode = extract_socket_inode(&l)?;
                 return Ok(inode);
@@ -100,15 +97,15 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut path_buf = PathBuf::new();
     path_buf.push(path);
     let mut pids: Vec<Pid> = Vec::new();
-    let stat_info = nix::sys::stat::lstat(&path_buf)?;
-    eprintln!("stat info: {:?}", stat_info);
+    let stat_info = lstat(&path_buf)?;
+    info!("stat info: {:?}", stat_info);
 
     let mut target_path = PathBuf::new();
     target_path.push(fs::canonicalize(&path_buf)?);
 
     // FIXME: not sure what the *right* way to do this is. Revisit later.
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
-        eprintln!("stat info reg file: {:?}", stat_info.st_mode);
+        info!("stat info reg file: {:?}", stat_info.st_mode);
         for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
             let e = unwrap_or_continue!(entry);
             let real = unwrap_or_continue!(fs::read_link(&e));
@@ -117,20 +114,20 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
                 let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
                 let pid = unwrap_or_continue!(pbuf.parse::<u32>());
                 pids.push(Pid(pid));
-                eprintln!("process: {:?} -> real: {:?}", pid, real);
+                info!("process: {:?} -> real: {:?}", pid, real);
             }
         }
     } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFSOCK.bits() {
-        eprintln!("stat info socket file: {:?}", stat_info.st_mode);
+        info!("stat info socket file: {:?}", stat_info.st_mode);
         let inode = socket_file_to_inode(&target_path)?;
-        eprintln!("inode: {:?}", inode);
+        info!("inode: {:?}", inode);
         for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
             let e = unwrap_or_continue!(entry);
             let real = unwrap_or_continue!(fs::read_link(&e));
             let real = real.as_path().display().to_string();
-            eprintln!("real: {:?} vs {}", real, inode.0);
+            trace!("real: {:?} vs {}", real, inode.0);
             if inode.contained_in(&real) {
-                eprintln!("real found: {:?}", real);
+                info!("real found: {:?}", real);
                 let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
                 let pid = unwrap_or_continue!(pbuf.parse::<u32>());
                 pids.push(Pid(pid));
@@ -149,7 +146,9 @@ mod tests {
     use std::io::Write;
     use std::thread;
     use std::time::Duration;
+    use std::process::Command;
 
+    use env_logger;
     use nix::unistd::{fork, ForkResult};
     use rusty_fork::rusty_fork_id;
     use rusty_fork::rusty_fork_test;
@@ -171,11 +170,34 @@ mod tests {
         assert!(inode.contained_in(buf));
     }
 
+    rusty_fork_test! {
     #[test]
-    fn test_ofile_unix_socket_file() {
-        let ofile_pid = opath("/tmp/test_unix_sock").unwrap().pop().unwrap();
+    fn test_ofile_other_process_unix_socket() {
+        env_logger::init();
+        let path = "/tmp/.opath_socket";
 
-        eprintln!("Pid: {:?}", ofile_pid);
+        match fork() {
+            Ok(ForkResult::Parent { child, .. }) => {
+                eprintln!("Child pid: {}", child);
+                let mut spawn = Command::new("ncat")
+                                .arg("-U")
+                                .arg(&path)
+                                .arg("-l")
+                                .spawn()
+                                .unwrap();
+                thread::sleep(Duration::from_millis(500));
+                let pid = opath(&path).unwrap().pop().unwrap();
+
+                assert_eq!(pid.0, spawn.id() as u32);
+                spawn.kill().unwrap();
+                std::fs::remove_file(&path).unwrap();
+            },
+            Ok(ForkResult::Child) => {
+                thread::sleep(Duration::from_millis(5000));
+            },
+            Err(_) => panic!("Fork failed"),
+        }
+    }
     }
 
     #[test]
