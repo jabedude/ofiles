@@ -1,6 +1,6 @@
 language: rust
 before_install:
-  - sudo apt-get install ncat
+  - sudo apt-get install nmap -y
 script:
   - cargo build
   - RUST_BACKTRACE=1 cargo test
