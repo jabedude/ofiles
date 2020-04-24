@@ -1,4 +1,5 @@
 use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
@@ -11,10 +12,33 @@ use nix::sys::stat::{fstat, SFlag};
 #[derive(Debug)]
 pub struct Pid(u32);
 
+#[derive(Debug)]
+struct Inode(u64);
+
+impl Inode {
+    pub fn contained_in(&self, other: &str) -> bool {
+        let num_str: String = other.chars().filter(|x| x.is_numeric()).collect();
+        eprintln!("num str: {}", num_str);
+        match num_str.parse::<u64>() {
+            Ok(n) => n == self.0,
+            Err(_) => false,
+        }
+    }
+}
+
 error_chain::error_chain! {
     foreign_links {
         Io(::std::io::Error);
         Nix(nix::Error);
+        ParseInt(::std::num::ParseIntError);
+        Parse(::std::string::ParseError);
+    }
+
+    errors {
+        InodeNotFound(t: String) {
+            description("Inode not found")
+            display("Inode not found: '{}'", t)
+        }
     }
 }
 
@@ -41,6 +65,35 @@ macro_rules! unwrap_or_continue {
 ////            pids.push(Pid(pid));
 //}
 
+/// Given a single `line` from `/proc/net/unix`, return the Inode.
+///
+/// See man 5 proc.
+fn extract_socket_inode(line: &str) -> Result<Inode> {
+	eprintln!("line: {}", line);
+    let elements: Vec<&str> = line.split(' ').collect();
+    let inode = Inode(elements[6].parse::<u64>()?);
+
+    Ok(inode)
+}
+
+fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
+    let f = File::open("/proc/net/unix")?;
+    let f = BufReader::new(f);
+
+    eprintln!("PathBuf: {:?}", path_buf);
+    for line in f.lines() {
+        if let Ok(l) = line {
+            eprintln!("line: {:?}", l);
+            if l.contains(path_buf.to_str().unwrap()) {
+                let inode = extract_socket_inode(&l)?;
+                return Ok(inode);
+            }
+        }
+    }
+
+    Err(Error::from_kind(ErrorKind::InodeNotFound(path_buf.to_str().unwrap().to_string())))
+}
+
 /// Given a file path, return the process id of any processes that have an open file descriptor
 /// pointing to the given file.
 pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
@@ -48,6 +101,7 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     path_buf.push(path);
     let mut pids: Vec<Pid> = Vec::new();
     let stat_info = nix::sys::stat::lstat(&path_buf)?;
+    eprintln!("stat info: {:?}", stat_info);
 
     let mut target_path = PathBuf::new();
     target_path.push(fs::canonicalize(&path_buf)?);
@@ -55,19 +109,32 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     // FIXME: not sure what the *right* way to do this is. Revisit later.
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
         eprintln!("stat info reg file: {:?}", stat_info.st_mode);
+        for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
+            let e = unwrap_or_continue!(entry);
+            let real = unwrap_or_continue!(fs::read_link(&e));
+
+            if real == target_path {
+                let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
+                let pid = unwrap_or_continue!(pbuf.parse::<u32>());
+                pids.push(Pid(pid));
+                eprintln!("process: {:?} -> real: {:?}", pid, real);
+            }
+        }
     } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFSOCK.bits() {
         eprintln!("stat info socket file: {:?}", stat_info.st_mode);
-    }
-
-    for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
-        let e = unwrap_or_continue!(entry);
-        let real = unwrap_or_continue!(fs::read_link(&e));
-
-        if real == target_path {
-            let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
-            let pid = unwrap_or_continue!(pbuf.parse::<u32>());
-            pids.push(Pid(pid));
-            eprintln!("process: {:?} -> real: {:?}", pid, real);
+        let inode = socket_file_to_inode(&target_path)?;
+        eprintln!("inode: {:?}", inode);
+        for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
+            let e = unwrap_or_continue!(entry);
+            let real = unwrap_or_continue!(fs::read_link(&e));
+            let real = real.as_path().display().to_string();
+            eprintln!("real: {:?} vs {}", real, inode.0);
+            if inode.contained_in(&real) {
+                eprintln!("real found: {:?}", real);
+                let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
+                let pid = unwrap_or_continue!(pbuf.parse::<u32>());
+                pids.push(Pid(pid));
+            }
         }
     }
 
@@ -76,6 +143,7 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
 
 #[cfg(test)]
 mod tests {
+    use super::Inode;
     use super::opath;
     use std::fs::File;
     use std::io::Write;
@@ -93,6 +161,21 @@ mod tests {
     #[test]
     fn it_works() {
         assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    fn test_inode_contained_in() {
+        let inode = Inode(1234);
+        let buf = "socket:[1234]";
+
+        assert!(inode.contained_in(buf));
+    }
+
+    #[test]
+    fn test_ofile_unix_socket_file() {
+        let ofile_pid = opath("/tmp/test_unix_sock").unwrap().pop().unwrap();
+
+        eprintln!("Pid: {:?}", ofile_pid);
     }
 
     #[test]
