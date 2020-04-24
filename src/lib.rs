@@ -1,9 +1,9 @@
 use std::fs::{self, File};
-use std::path::{Path, PathBuf};
 use std::os::unix::io::AsRawFd;
+use std::path::{Path, PathBuf};
 
-use glob::glob;
 use error_chain;
+use glob::glob;
 use nix::sys::stat::{fstat, SFlag};
 
 /// Newtype pattern to avoid type errors.
@@ -45,8 +45,7 @@ macro_rules! unwrap_or_continue {
 /// pointing to the given file.
 pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut pids: Vec<Pid> = Vec::new();
-    let stat_info = 
-    {
+    let stat_info = {
         let file = File::open(&path)?;
         let fd = file.as_raw_fd();
         fstat(fd)?
@@ -58,7 +57,7 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     // FIXME: not sure what the *right* way to do this is. Revisit later.
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
         eprintln!("stat info reg file: {:?}", stat_info.st_mode);
-    } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFSOCK.bits()  {
+    } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFSOCK.bits() {
         eprintln!("stat info socket file: {:?}", stat_info.st_mode);
     }
 
@@ -67,10 +66,7 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
         let real = unwrap_or_continue!(fs::read_link(&e));
 
         if real == target_path {
-            let pbuf = e.to_str()
-                        .unwrap()
-                        .split('/')
-                        .collect::<Vec<&str>>()[2];
+            let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
             let pid = unwrap_or_continue!(pbuf.parse::<u32>());
             pids.push(Pid(pid));
             eprintln!("process: {:?} -> real: {:?}", pid, real);
@@ -83,10 +79,10 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
 #[cfg(test)]
 mod tests {
     use super::opath;
-    use std::time::Duration;
-    use std::thread;
     use std::fs::File;
     use std::io::Write;
+    use std::thread;
+    use std::time::Duration;
 
     use nix::unistd::{fork, ForkResult};
     use rusty_fork::rusty_fork_id;
@@ -107,7 +103,7 @@ mod tests {
         writeln!(file, "T").unwrap();
 
         let p = file.path();
-        
+
         let ofile_pid = opath(p).unwrap().pop().unwrap();
 
         assert_eq!(ofile_pid.0, std::process::id());
@@ -119,7 +115,7 @@ mod tests {
         let path = "/tmp/.opath_tmp";
 
         match fork() {
-            Ok(ForkResult::Parent { child: child, .. }) => {
+            Ok(ForkResult::Parent { child, .. }) => {
                 eprintln!("Child pid: {}", child);
                 let pid = opath(&path).unwrap().pop().unwrap();
 
