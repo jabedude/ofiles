@@ -219,6 +219,7 @@ mod tests {
 
         match fork() {
             Ok(ForkResult::Parent { child, .. }) => {
+                thread::sleep(Duration::from_millis(100));
                 eprintln!("Child pid: {}", child);
                 let pid = opath(&path).unwrap().pop().unwrap();
 
@@ -228,7 +229,7 @@ mod tests {
                 let mut f = File::create(&path).unwrap();
                 writeln!(f, "test").unwrap();
 
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(500));
             },
             Err(_) => panic!("Fork failed"),
         }
