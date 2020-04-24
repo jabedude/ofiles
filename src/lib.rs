@@ -44,15 +44,13 @@ macro_rules! unwrap_or_continue {
 /// Given a file path, return the process id of any processes that have an open file descriptor
 /// pointing to the given file.
 pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
+    let mut path_buf = PathBuf::new();
+    path_buf.push(path);
     let mut pids: Vec<Pid> = Vec::new();
-    let stat_info = {
-        let file = File::open(&path)?;
-        let fd = file.as_raw_fd();
-        fstat(fd)?
-    };
+    let stat_info = nix::sys::stat::lstat(&path_buf)?;
 
     let mut target_path = PathBuf::new();
-    target_path.push(fs::canonicalize(path)?);
+    target_path.push(fs::canonicalize(&path_buf)?);
 
     // FIXME: not sure what the *right* way to do this is. Revisit later.
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
