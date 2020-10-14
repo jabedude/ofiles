@@ -9,11 +9,17 @@ use nix::sys::stat::{lstat, SFlag};
 
 /// Newtype pattern to avoid type errors.
 /// https://www.gnu.org/software/libc/manual/html_node/Process-Identification.html
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Pid(u32);
 
 #[derive(Debug)]
 struct Inode(u64);
+
+impl From<Pid> for u32 {
+    fn from(pid: Pid) -> u32 {
+        pid.0
+    }
+}
 
 impl Inode {
     pub fn contained_in(&self, other: &str) -> bool {
@@ -74,7 +80,7 @@ fn extract_socket_inode(line: &str) -> Result<Inode> {
     Ok(inode)
 }
 
-/// Search `/proc/net/unix` for the line containing `path_buf` and return the inode given 
+/// Search `/proc/net/unix` for the line containing `path_buf` and return the inode given
 /// by the system.
 fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
     let f = File::open("/proc/net/unix")?;
@@ -90,7 +96,9 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
         }
     }
 
-    Err(Error::from_kind(ErrorKind::InodeNotFound(path_buf.to_str().unwrap().to_string())))
+    Err(Error::from_kind(ErrorKind::InodeNotFound(
+        path_buf.to_str().unwrap().to_string(),
+    )))
 }
 
 /// Given a file path, return the process id of any processes that have an open file descriptor
@@ -142,13 +150,13 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
 
 #[cfg(test)]
 mod tests {
-    use super::Inode;
     use super::opath;
+    use super::Inode;
     use std::fs::File;
     use std::io::Write;
+    use std::process::Command;
     use std::thread;
     use std::time::Duration;
-    use std::process::Command;
 
     use env_logger;
     use nix::unistd::{fork, ForkResult};
