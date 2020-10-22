@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use error_chain;
 use glob::glob;
-use log::*;
+use log::{trace, info};
 use nix::sys::stat::{lstat, SFlag};
 
 /// Newtype pattern to avoid type errors.
@@ -112,6 +112,7 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
 
     let mut target_path = PathBuf::new();
     target_path.push(fs::canonicalize(&path_buf)?);
+    info!("Target path: {:?}", target_path);
 
     // FIXME: not sure what the *right* way to do this is. Revisit later.
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
@@ -143,6 +144,23 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
                 pids.push(Pid(pid));
             }
         }
+    } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFDIR.bits() {
+        info!("Got a directory!");
+        for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
+            let e = unwrap_or_continue!(entry);
+            let real = unwrap_or_continue!(fs::read_link(&e));
+            trace!("Real: {:?}", real);
+
+            if real == target_path {
+                info!("Found target: {:?}", target_path);
+                let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
+                let pid = unwrap_or_continue!(pbuf.parse::<u32>());
+                pids.push(Pid(pid));
+                info!("process: {:?} -> real: {:?}", pid, real);
+            }
+        }
+    } else {
+        return Err(crate::ErrorKind::InodeNotFound(format!("Unknown file {:?}", stat_info)).into());
     }
 
     Ok(pids)
@@ -163,14 +181,9 @@ mod tests {
     use rusty_fork::rusty_fork_id;
     use rusty_fork::rusty_fork_test;
     use rusty_fork::rusty_fork_test_name;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
 
-    // TODO: test symlink, socket file, directory, fifo
-
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
+    // TODO: test symlink, socket file, fifo
 
     #[test]
     fn test_inode_contained_in() {
@@ -222,9 +235,20 @@ mod tests {
         assert_eq!(ofile_pid.0, std::process::id());
     }
 
+    #[test]
+    fn test_directory_basic() {
+        let tmp_dir = TempDir::new().unwrap();
+        let p = tmp_dir.path();
+        let _dir = File::open(&p).unwrap();
+
+        let ofile_pid = opath(p).unwrap().pop().unwrap();
+
+        assert_eq!(ofile_pid.0, std::process::id());
+    }
+
     rusty_fork_test! {
     #[test]
-    fn test_ofile_other_process() {
+    fn test_file_other_process() {
         let path = "/tmp/.opath_tmp";
 
         match fork() {
@@ -238,6 +262,29 @@ mod tests {
             Ok(ForkResult::Child) => {
                 let mut f = File::create(&path).unwrap();
                 writeln!(f, "test").unwrap();
+
+                thread::sleep(Duration::from_millis(500));
+            },
+            Err(_) => panic!("Fork failed"),
+        }
+    }
+    }
+
+    rusty_fork_test! {
+    #[test]
+    fn test_directory_other_process() {
+        let path = ".";
+
+        match fork() {
+            Ok(ForkResult::Parent { child, .. }) => {
+                thread::sleep(Duration::from_millis(100));
+                eprintln!("Child pid: {}", child);
+                let pid = opath(&path).unwrap().pop().unwrap();
+
+                assert_eq!(pid.0, child.as_raw() as u32);
+            },
+            Ok(ForkResult::Child) => {
+                let _dir = File::open(&path).unwrap();
 
                 thread::sleep(Duration::from_millis(500));
             },
