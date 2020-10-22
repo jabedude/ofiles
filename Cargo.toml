@@ -1,6 +1,6 @@
 [package]
 name = "ofiles"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Joshua Abraham <sinisterpatrician@gmail.com>"]
 edition = "2018"
 description = "Identify processes that have opened files or sockets"
