@@ -182,8 +182,9 @@ mod tests {
     use rusty_fork::rusty_fork_test;
     use rusty_fork::rusty_fork_test_name;
     use tempfile::{NamedTempFile, TempDir};
+    use nix::unistd::symlinkat;
 
-    // TODO: test symlink, socket file, fifo
+    // TODO: test socket file, fifo
 
     #[test]
     fn test_inode_contained_in() {
@@ -291,5 +292,24 @@ mod tests {
             Err(_) => panic!("Fork failed"),
         }
     }
+    }
+
+    #[test]
+    fn test_symlink_basic() {
+        let orig = "/tmp/.ofile_orig";
+        let sym = "/tmp/.symlink";
+
+        {
+            std::fs::remove_file(orig);
+            std::fs::remove_file(sym);
+            let orig_file = File::create(orig).unwrap();
+            symlinkat(orig, None, sym).unwrap();
+        }
+
+        let sym_file = File::open(sym).unwrap();
+
+        let ofile_pid = opath(orig).unwrap().pop().unwrap();
+
+        assert_eq!(ofile_pid.0, std::process::id());
     }
 }
