@@ -101,9 +101,16 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
     )))
 }
 
+/// (DEPRICATED) Given a file path, return the process id of any processes that have an open file descriptor
+/// pointing to the given file.
+#[deprecated]
+pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
+    pids_of_path(path)
+}
+
 /// Given a file path, return the process id of any processes that have an open file descriptor
 /// pointing to the given file.
-pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
+pub fn pids_of_path<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut path_buf = PathBuf::new();
     path_buf.push(path);
     let mut pids: Vec<Pid> = Vec::new();
