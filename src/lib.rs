@@ -173,9 +173,23 @@ pub fn pids_of_path<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     Ok(pids)
 }
 
+/// Given a process id, return a vector of file paths the process has open.
+pub fn paths_of_pid(pid: u32) -> Result<Vec<PathBuf>> {
+    let proc_path = format!("/proc/{}/fd/*", pid);
+    let mut paths = Vec::new();
+    for entry in glob(&proc_path).expect("Failed to read glob pattern") {
+        let e = unwrap_or_continue!(entry);
+        let real = unwrap_or_continue!(fs::read_link(&e));
+        trace!("Real path: {:?}", real);
+        paths.push(real);
+    }
+
+    Ok(paths)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::opath;
+    use super::{opath, paths_of_pid};
     use super::Inode;
     use std::fs::File;
     use std::io::Write;
@@ -192,6 +206,20 @@ mod tests {
     use nix::unistd::symlinkat;
 
     // TODO: test socket file, fifo
+
+    #[test]
+    fn test_files_of_pid_basic() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "T").unwrap();
+
+        let p = file.path().to_path_buf();
+
+        let paths = paths_of_pid(std::process::id()).unwrap();
+
+        eprintln!("Paths: {:?}", paths);
+        eprintln!("Expecting to find: {:?}", p);
+        assert!(paths.contains(&p));
+    }
 
     #[test]
     fn test_inode_contained_in() {
@@ -309,11 +337,11 @@ mod tests {
         {
             std::fs::remove_file(orig);
             std::fs::remove_file(sym);
-            let orig_file = File::create(orig).unwrap();
+            let _orig_file = File::create(orig).unwrap();
             symlinkat(orig, None, sym).unwrap();
         }
 
-        let sym_file = File::open(sym).unwrap();
+        let _sym_file = File::open(sym).unwrap();
 
         let ofile_pid = opath(orig).unwrap().pop().unwrap();
 
