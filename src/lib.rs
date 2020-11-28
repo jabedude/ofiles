@@ -12,6 +12,15 @@ use nix::sys::stat::{lstat, SFlag};
 #[derive(Debug, Clone, Copy)]
 pub struct Pid(u32);
 
+/// Socket types
+#[derive(Debug, PartialEq)]
+pub enum Socket {
+    /// Tcp + IPv4
+    Tcp4,
+    /// Tcp + IPv6
+    Tcp6
+}
+
 #[derive(Debug)]
 struct Inode(u64);
 
@@ -23,11 +32,13 @@ impl From<Pid> for u32 {
 
 impl Inode {
     pub fn contained_in(&self, other: &str) -> bool {
-        let num_str: String = other.chars().filter(|x| x.is_numeric()).collect();
-        match num_str.parse::<u64>() {
-            Ok(n) => n == self.0,
-            Err(_) => false,
-        }
+        //let num_str: String = other.chars().filter(|x| x.is_numeric()).collect();
+        //match num_str.parse::<u64>() {
+        //    Ok(n) => n == self.0,
+        //    Err(_) => false,
+        //}
+        let str_repr = self.0.to_string();
+        other.contains(&str_repr)
     }
 }
 
@@ -57,19 +68,6 @@ macro_rules! unwrap_or_continue {
     }};
 }
 
-//fn extract_pid_from_proc<P: AsRef<Path>>(proc_entry: P) -> Result<Pid> {
-//
-//    let vec: Vec<&str> = proc_entry.as_os_string()?
-//                        .split('/')
-//                        .collect();
-//
-//    eprintln!("vec: {:?}", vec);
-//    Ok(Pid(0))
-////                        .collect::<Vec<&str>>()[2]
-////                        .parse::<u32>().unwrap();
-////            pids.push(Pid(pid));
-//}
-
 /// Given a single `line` from `/proc/net/unix`, return the Inode.
 ///
 /// See man 5 proc.
@@ -78,6 +76,12 @@ fn extract_socket_inode(line: &str) -> Result<Inode> {
     let inode = Inode(elements[6].parse::<u64>()?);
 
     Ok(inode)
+}
+
+fn extract_inode(line: &str) -> Result<Inode> {
+    let trim = line.trim_end_matches(']');
+    let trim = trim.trim_start_matches("socket:[");
+    Ok(Inode(trim.parse::<u64>()?))
 }
 
 /// Search `/proc/net/unix` for the line containing `path_buf` and return the inode given
@@ -98,6 +102,26 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
 
     Err(Error::from_kind(ErrorKind::InodeNotFound(
         path_buf.to_str().unwrap().to_string(),
+    )))
+}
+
+/// Search `/proc/net` for the socket corresponding to `inode`.
+fn inode_to_socket(inode: Inode) -> Result<Socket> {
+    let f = File::open("/proc/net/tcp")?;
+    let f = BufReader::new(f);
+
+    for line in f.lines() {
+        if let Ok(l) = line {
+            eprintln!("Looking for {:?}", inode);
+            eprintln!("line: {:?}", l);
+            if inode.contained_in(&l) {
+                return Ok(Socket::Tcp4)
+            }
+        }
+    }
+
+    Err(Error::from_kind(ErrorKind::InodeNotFound(
+        format!("inode: {:?}", inode),
     )))
 }
 
@@ -187,10 +211,34 @@ pub fn paths_of_pid(pid: u32) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+/// Given a process id, return a vector of sockets the process has open.
+pub fn sockets_of_pid(pid: u32) -> Result<Vec<Socket>> {
+    let proc_path = format!("/proc/{}/fd/*", pid);
+    let mut sockets = Vec::new();
+
+    for entry in glob(&proc_path).expect("Failed to read glob pattern") {
+        let e = unwrap_or_continue!(entry);
+        let real = unwrap_or_continue!(fs::read_link(&e));
+        trace!("Real path: {:?}", real);
+        eprintln!("Real path: {:?}", real);
+        if let Some(real_str) = real.to_str() {
+            if real_str.contains("socket:[") {
+                let inode = extract_inode(real_str)?;
+                eprintln!("Inode: {:?}", inode);
+                let socket = inode_to_socket(inode)?;
+                sockets.push(socket);
+            }
+        }
+    }
+
+    Ok(sockets)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{opath, paths_of_pid};
+    use super::{opath, paths_of_pid, Socket, sockets_of_pid};
     use super::Inode;
+    use std::net::TcpListener;
     use std::fs::File;
     use std::io::Write;
     use std::process::Command;
@@ -206,6 +254,16 @@ mod tests {
     use nix::unistd::symlinkat;
 
     // TODO: test socket file, fifo
+
+    #[test]
+    fn test_sockets_of_pid_basic() {
+        let expected = Socket::Tcp4;
+        let sock = TcpListener::bind("127.0.0.1:9090");
+
+        let pid_socks = sockets_of_pid(std::process::id()).unwrap();
+
+        assert!(pid_socks.contains(&expected));
+    }
 
     #[test]
     fn test_files_of_pid_basic() {
