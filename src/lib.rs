@@ -141,10 +141,6 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let stat_info = lstat(&path_buf)?;
     info!("stat info: {:?}", stat_info);
 
-    let mut target_path = PathBuf::new();
-    target_path.push(fs::canonicalize(&path_buf)?);
-    info!("Target path: {:?}", target_path);
-
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
         info!("stat info reg file: {:?}", stat_info.st_mode);
         pids.extend(ofile(&path)?);
