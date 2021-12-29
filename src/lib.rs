@@ -57,18 +57,6 @@ macro_rules! unwrap_or_continue {
     }};
 }
 
-//fn extract_pid_from_proc<P: AsRef<Path>>(proc_entry: P) -> Result<Pid> {
-//
-//    let vec: Vec<&str> = proc_entry.as_os_string()?
-//                        .split('/')
-//                        .collect();
-//
-//    eprintln!("vec: {:?}", vec);
-//    Ok(Pid(0))
-////                        .collect::<Vec<&str>>()[2]
-////                        .parse::<u32>().unwrap();
-////            pids.push(Pid(pid));
-//}
 
 /// Given a single `line` from `/proc/net/unix`, return the Inode.
 ///
