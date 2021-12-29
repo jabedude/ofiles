@@ -89,22 +89,30 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
     )))
 }
 
-/// Returns the PIDs that currently have the given file or directory open.
-pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
-    let mut pids: Vec<Pid> = Vec::new();
-    let mut target_path = PathBuf::new();
-    target_path.push(fs::canonicalize(&path)?);
+
+fn lookup_pids<F>(pids: &mut Vec<Pid>, matcher: F)
+ where F: Fn(&PathBuf) -> bool
+ {
     for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
         let e = unwrap_or_continue!(entry);
         let real = unwrap_or_continue!(fs::read_link(&e));
 
-        if real == target_path {
+        if matcher(&real) {
             let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
             let pid = unwrap_or_continue!(pbuf.parse::<u32>());
             pids.push(Pid(pid));
             info!("process: {:?} -> real: {:?}", pid, real);
         }
-    };
+    }
+}
+
+
+/// Returns the PIDs that currently have the given file or directory open.
+pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
+    let mut pids: Vec<Pid> = Vec::new();
+    let mut target_path = PathBuf::new();
+    target_path.push(fs::canonicalize(&path)?);
+    lookup_pids(&mut pids, |real| *real == target_path);
     return Ok(pids);
 }
 
@@ -116,18 +124,7 @@ pub fn osocket<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     target_path.push(fs::canonicalize(&path)?);
     let inode = socket_file_to_inode(&target_path)?;
     info!("inode: {:?}", inode);
-    for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
-        let e = unwrap_or_continue!(entry);
-        let real = unwrap_or_continue!(fs::read_link(&e));
-        let real = real.as_path().display().to_string();
-        trace!("real: {:?} vs {}", real, inode.0);
-        if inode.contained_in(&real) {
-            info!("real found: {:?}", real);
-            let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
-            let pid = unwrap_or_continue!(pbuf.parse::<u32>());
-            pids.push(Pid(pid));
-        }
-    };
+    lookup_pids(&mut pids, |real| inode.contained_in(&real.as_path().display().to_string()));
     return Ok(pids);
 }
 
