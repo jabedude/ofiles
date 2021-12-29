@@ -155,8 +155,7 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
 
 #[cfg(test)]
 mod tests {
-    use super::opath;
-    use super::Inode;
+    use super::*;
     use std::fs::File;
     use std::io::Write;
     use std::process::Command;
@@ -184,6 +183,7 @@ mod tests {
     #[test]
     fn test_ofile_unix_socket() {
         let path = "/tmp/.opath_socket";
+        std::fs::remove_file(&path).unwrap_or(());
 
         let sock = nix::sys::socket::socket(
             nix::sys::socket::AddressFamily::Unix,
@@ -196,6 +196,7 @@ mod tests {
             &nix::sys::socket::SockAddr::new_unix(path).unwrap()
         ).unwrap();
         let pid = opath(&path).unwrap().pop().unwrap();
+        assert_eq!(opath(&path).unwrap().len(), 1);
 
         assert_eq!(pid.0,  std::process::id() as u32);
         drop(sock);
