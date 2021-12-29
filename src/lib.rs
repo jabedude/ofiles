@@ -119,6 +119,27 @@ pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     return Ok(pids);
 }
 
+pub fn osocket<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
+    let mut pids: Vec<Pid> = Vec::new();
+    let mut target_path = PathBuf::new();
+    target_path.push(fs::canonicalize(&path)?);
+    let inode = socket_file_to_inode(&target_path)?;
+    info!("inode: {:?}", inode);
+    for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
+        let e = unwrap_or_continue!(entry);
+        let real = unwrap_or_continue!(fs::read_link(&e));
+        let real = real.as_path().display().to_string();
+        trace!("real: {:?} vs {}", real, inode.0);
+        if inode.contained_in(&real) {
+            info!("real found: {:?}", real);
+            let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
+            let pid = unwrap_or_continue!(pbuf.parse::<u32>());
+            pids.push(Pid(pid));
+        }
+    };
+    return Ok(pids);
+}
+
 /// Given a file path, return the process id of any processes that have an open file descriptor
 /// pointing to the given file.
 pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
@@ -137,20 +158,7 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
         pids.extend(ofile(&path)?);
     } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFSOCK.bits() {
         info!("stat info socket file: {:?}", stat_info.st_mode);
-        let inode = socket_file_to_inode(&target_path)?;
-        info!("inode: {:?}", inode);
-        for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
-            let e = unwrap_or_continue!(entry);
-            let real = unwrap_or_continue!(fs::read_link(&e));
-            let real = real.as_path().display().to_string();
-            trace!("real: {:?} vs {}", real, inode.0);
-            if inode.contained_in(&real) {
-                info!("real found: {:?}", real);
-                let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
-                let pid = unwrap_or_continue!(pbuf.parse::<u32>());
-                pids.push(Pid(pid));
-            }
-        }
+        pids.extend(osocket(&path)?);
     } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFDIR.bits() {
         info!("Got a directory!");
         for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
@@ -169,7 +177,6 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     } else {
         return Err(crate::ErrorKind::InodeNotFound(format!("Unknown file {:?}", stat_info)).into());
     }
-
     Ok(pids)
 }
 
