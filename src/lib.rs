@@ -89,6 +89,7 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
     )))
 }
 
+/// Returns the PIDs that currently have the given file or directory open.
 pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut pids: Vec<Pid> = Vec::new();
     let mut target_path = PathBuf::new();
