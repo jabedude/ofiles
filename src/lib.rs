@@ -198,7 +198,7 @@ mod tests {
         let pid = opath(&path).unwrap().pop().unwrap();
         assert_eq!(opath(&path).unwrap().len(), 1);
 
-        assert_eq!(pid.0,  std::process::id() as u32);
+        assert_eq!(u32::from(pid),  std::process::id() as u32);
         drop(sock);
         std::fs::remove_file(&path).unwrap();
     }
