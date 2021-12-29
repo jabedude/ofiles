@@ -114,7 +114,6 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     target_path.push(fs::canonicalize(&path_buf)?);
     info!("Target path: {:?}", target_path);
 
-    // FIXME: not sure what the *right* way to do this is. Revisit later.
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
         info!("stat info reg file: {:?}", stat_info.st_mode);
         for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
