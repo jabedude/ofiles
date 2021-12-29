@@ -194,34 +194,25 @@ mod tests {
         assert!(inode.contained_in(buf));
     }
 
-    rusty_fork_test! {
     #[test]
-    fn test_ofile_other_process_unix_socket() {
-        env_logger::init();
+    fn test_ofile_unix_socket() {
         let path = "/tmp/.opath_socket";
 
-        match fork() {
-            Ok(ForkResult::Parent { child, .. }) => {
-                eprintln!("Child pid: {}", child);
-                let mut spawn = Command::new("nc")
-                                .arg("-U")
-                                .arg(&path)
-                                .arg("-l")
-                                .spawn()
-                                .unwrap();
-                thread::sleep(Duration::from_millis(500));
-                let pid = opath(&path).unwrap().pop().unwrap();
+        let sock = nix::sys::socket::socket(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Datagram,
+            nix::sys::socket::SockFlag::empty(),
+            None,
+        ).unwrap();
+        nix::sys::socket::bind(
+            sock,
+            &nix::sys::socket::SockAddr::new_unix(path).unwrap()
+        ).unwrap();
+        let pid = opath(&path).unwrap().pop().unwrap();
 
-                assert_eq!(pid.0, spawn.id() as u32);
-                spawn.kill().unwrap();
-                std::fs::remove_file(&path).unwrap();
-            },
-            Ok(ForkResult::Child) => {
-                thread::sleep(Duration::from_millis(5000));
-            },
-            Err(_) => panic!("Fork failed"),
-        }
-    }
+        assert_eq!(pid.0,  std::process::id() as u32);
+        drop(sock);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
