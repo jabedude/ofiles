@@ -69,7 +69,7 @@ fn extract_socket_inode(line: &str) -> Result<Inode> {
 
 /// Search `/proc/net/unix` for the line containing `path_buf` and return the inode given
 /// by the system.
-fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
+fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Option<Inode>> {
     let f = File::open("/proc/net/unix")?;
     let f = BufReader::new(f);
 
@@ -78,14 +78,12 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
             info!("line: {:?}", l);
             if l.contains(path_buf.to_str().unwrap()) {
                 let inode = extract_socket_inode(&l)?;
-                return Ok(inode);
+                return Ok(Some(inode));
             }
         }
     }
 
-    Err(Error::from_kind(ErrorKind::InodeNotFound(
-        path_buf.to_str().unwrap().to_string(),
-    )))
+    Ok(None)
 }
 
 fn lookup_pids<F>(pids: &mut Vec<Pid>, matcher: F)
@@ -119,7 +117,10 @@ pub fn osocket<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut pids: Vec<Pid> = Vec::new();
     let mut target_path = PathBuf::new();
     target_path.push(fs::canonicalize(&path)?);
-    let inode = socket_file_to_inode(&target_path)?;
+    let inode = match socket_file_to_inode(&target_path)? {
+        Some(inode) => inode,
+        None => return Ok(pids),
+    };
     info!("inode: {:?}", inode);
     lookup_pids(&mut pids, |real| {
         inode.contained_in(&real.as_path().display().to_string())
@@ -197,7 +198,9 @@ mod tests {
         assert_eq!(opath(&path).unwrap().len(), 1);
 
         assert_eq!(u32::from(pid), std::process::id() as u32);
+        nix::unistd::close(sock).unwrap();
         drop(sock);
+        assert_eq!(opath(&path).unwrap().len(), 0);
         std::fs::remove_file(&path).unwrap();
     }
 
@@ -234,8 +237,8 @@ mod tests {
         let p = "/tmp/.not_a_socket";
         std::fs::write(p, "foo").unwrap();
         match osocket(p) {
-            Ok(_) => unreachable!(),
-            Err(e) => assert_eq!(format!("{:?}", e), "Error(InodeNotFound(\"/tmp/.not_a_socket\"), State { next_error: None, backtrace: InternalBacktrace })"),
+            Ok(pids) => assert_eq!(pids.len(), 0),
+            Err(e) => unreachable!(),
         };
         std::fs::remove_file(&p).unwrap();
     }
