@@ -216,6 +216,34 @@ mod tests {
     }
 
     #[test]
+    fn test_non_existant_file_basic() {
+        let p = "/tmp/non-existant-file";
+        match opath(p) {
+            Ok(_) => unreachable!(),
+            Err(e) => assert_eq!(format!("{:?}", e), "Error(Nix(Sys(ENOENT)), State { next_error: None, backtrace: InternalBacktrace })"),
+        };
+        match osocket(p) {
+            Ok(_) => unreachable!(),
+            Err(e) => assert_eq!(format!("{:?}", e), "Error(Io(Os { code: 2, kind: NotFound, message: \"No such file or directory\" }), State { next_error: None, backtrace: InternalBacktrace })"),
+        };
+    }
+
+
+    #[test]
+    fn test_not_a_socket() {
+        let p = "/tmp/.not_a_socket";
+        std::fs::write(p, "foo").unwrap();
+        match osocket(p) {
+            Ok(_) => unreachable!(),
+            Err(e) => assert_eq!(format!("{:?}", e), "Error(InodeNotFound(\"/tmp/.not_a_socket\"), State { next_error: None, backtrace: InternalBacktrace })"),
+        };
+        std::fs::remove_file(&p).unwrap();
+    }
+
+
+
+
+    #[test]
     fn test_directory_basic() {
         let tmp_dir = TempDir::new().unwrap();
         let p = tmp_dir.path();
