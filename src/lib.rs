@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use error_chain;
 use glob::glob;
-use log::{trace, info};
+use log::{info, trace};
 use nix::sys::stat::{lstat, SFlag};
 
 /// Newtype pattern to avoid type errors.
@@ -57,7 +57,6 @@ macro_rules! unwrap_or_continue {
     }};
 }
 
-
 /// Given a single `line` from `/proc/net/unix`, return the Inode.
 ///
 /// See man 5 proc.
@@ -89,10 +88,10 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
     )))
 }
 
-
 fn lookup_pids<F>(pids: &mut Vec<Pid>, matcher: F)
- where F: Fn(&PathBuf) -> bool
- {
+where
+    F: Fn(&PathBuf) -> bool,
+{
     for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
         let e = unwrap_or_continue!(entry);
         let real = unwrap_or_continue!(fs::read_link(&e));
@@ -106,7 +105,6 @@ fn lookup_pids<F>(pids: &mut Vec<Pid>, matcher: F)
     }
 }
 
-
 /// Returns the PIDs that currently have the given file or directory open.
 pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut pids: Vec<Pid> = Vec::new();
@@ -116,7 +114,6 @@ pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     return Ok(pids);
 }
 
-
 /// Returns the PIDs attached to the give socket.
 pub fn osocket<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut pids: Vec<Pid> = Vec::new();
@@ -124,10 +121,11 @@ pub fn osocket<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     target_path.push(fs::canonicalize(&path)?);
     let inode = socket_file_to_inode(&target_path)?;
     info!("inode: {:?}", inode);
-    lookup_pids(&mut pids, |real| inode.contained_in(&real.as_path().display().to_string()));
+    lookup_pids(&mut pids, |real| {
+        inode.contained_in(&real.as_path().display().to_string())
+    });
     return Ok(pids);
 }
-
 
 /// Given a file path, return the process id of any processes that have an open file descriptor
 /// pointing to the given file.
@@ -148,7 +146,9 @@ pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
         info!("Got a directory!");
         pids.extend(ofile(&path)?);
     } else {
-        return Err(crate::ErrorKind::InodeNotFound(format!("Unknown file {:?}", stat_info)).into());
+        return Err(
+            crate::ErrorKind::InodeNotFound(format!("Unknown file {:?}", stat_info)).into(),
+        );
     }
     Ok(pids)
 }
@@ -163,12 +163,12 @@ mod tests {
     use std::time::Duration;
 
     use env_logger;
+    use nix::unistd::symlinkat;
     use nix::unistd::{fork, ForkResult};
     use rusty_fork::rusty_fork_id;
     use rusty_fork::rusty_fork_test;
     use rusty_fork::rusty_fork_test_name;
     use tempfile::{NamedTempFile, TempDir};
-    use nix::unistd::symlinkat;
 
     // TODO: test socket file, fifo
 
@@ -190,15 +190,13 @@ mod tests {
             nix::sys::socket::SockType::Datagram,
             nix::sys::socket::SockFlag::empty(),
             None,
-        ).unwrap();
-        nix::sys::socket::bind(
-            sock,
-            &nix::sys::socket::SockAddr::new_unix(path).unwrap()
-        ).unwrap();
+        )
+        .unwrap();
+        nix::sys::socket::bind(sock, &nix::sys::socket::SockAddr::new_unix(path).unwrap()).unwrap();
         let pid = opath(&path).unwrap().pop().unwrap();
         assert_eq!(opath(&path).unwrap().len(), 1);
 
-        assert_eq!(u32::from(pid),  std::process::id() as u32);
+        assert_eq!(u32::from(pid), std::process::id() as u32);
         drop(sock);
         std::fs::remove_file(&path).unwrap();
     }
@@ -220,14 +218,16 @@ mod tests {
         let p = "/tmp/non-existant-file";
         match opath(p) {
             Ok(_) => unreachable!(),
-            Err(e) => assert_eq!(format!("{:?}", e), "Error(Nix(Sys(ENOENT)), State { next_error: None, backtrace: InternalBacktrace })"),
+            Err(e) => assert_eq!(
+                format!("{:?}", e),
+                "Error(Nix(Sys(ENOENT)), State { next_error: None, backtrace: InternalBacktrace })"
+            ),
         };
         match osocket(p) {
             Ok(_) => unreachable!(),
             Err(e) => assert_eq!(format!("{:?}", e), "Error(Io(Os { code: 2, kind: NotFound, message: \"No such file or directory\" }), State { next_error: None, backtrace: InternalBacktrace })"),
         };
     }
-
 
     #[test]
     fn test_not_a_socket() {
@@ -239,9 +239,6 @@ mod tests {
         };
         std::fs::remove_file(&p).unwrap();
     }
-
-
-
 
     #[test]
     fn test_directory_basic() {
