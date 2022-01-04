@@ -112,7 +112,7 @@ pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     return Ok(pids);
 }
 
-/// Returns the PIDs attached to the give socket.
+/// Returns the PIDs attached to the given socket.
 pub fn osocket<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut pids: Vec<Pid> = Vec::new();
     let mut target_path = PathBuf::new();
