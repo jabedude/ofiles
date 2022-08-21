@@ -4,22 +4,30 @@ use std::path::{Path, PathBuf};
 
 use error_chain;
 use glob::glob;
-use log::{info, trace};
+use log::{info};
 use nix::sys::stat::{lstat, SFlag};
 
 /// Newtype pattern to avoid type errors.
 /// https://www.gnu.org/software/libc/manual/html_node/Process-Identification.html
-#[derive(Debug, Clone, Copy)]
-pub struct Pid(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Pid(i32);
 
 #[derive(Debug)]
 struct Inode(u64);
 
-impl From<Pid> for u32 {
-    fn from(pid: Pid) -> u32 {
+impl From<Pid> for i32 {
+    fn from(pid: Pid) -> i32 {
         pid.0
     }
 }
+
+impl From<Pid> for u32 {
+    fn from(pid: Pid) -> u32 {
+        use std::convert::*;
+        u32::try_from(pid.0).unwrap()
+    }
+}
+
 
 impl Inode {
     pub fn contained_in(&self, other: &str) -> bool {
@@ -96,7 +104,7 @@ where
 
         if matcher(&real) {
             let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
-            let pid = unwrap_or_continue!(pbuf.parse::<u32>());
+            let pid = unwrap_or_continue!(pbuf.parse::<i32>());
             pids.push(Pid(pid));
             info!("process: {:?} -> real: {:?}", pid, real);
         }
@@ -159,11 +167,9 @@ mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
-    use std::process::Command;
     use std::thread;
     use std::time::Duration;
 
-    use env_logger;
     use nix::unistd::symlinkat;
     use nix::unistd::{fork, ForkResult};
     use rusty_fork::rusty_fork_id;
@@ -197,7 +203,7 @@ mod tests {
         let pid = opath(&path).unwrap().pop().unwrap();
         assert_eq!(opath(&path).unwrap().len(), 1);
 
-        assert_eq!(u32::from(pid), std::process::id() as u32);
+        assert_eq!(i32::from(pid), std::process::id() as i32);
         nix::unistd::close(sock).unwrap();
         drop(sock);
         assert_eq!(opath(&path).unwrap().len(), 0);
@@ -213,7 +219,7 @@ mod tests {
 
         let ofile_pid = opath(p).unwrap().pop().unwrap();
 
-        assert_eq!(ofile_pid.0, std::process::id());
+        assert_eq!(u32::from(ofile_pid), std::process::id());
     }
 
     #[test]
@@ -238,7 +244,7 @@ mod tests {
         std::fs::write(p, "foo").unwrap();
         match osocket(p) {
             Ok(pids) => assert_eq!(pids.len(), 0),
-            Err(e) => unreachable!(),
+            Err(_e) => unreachable!(),
         };
         std::fs::remove_file(&p).unwrap();
     }
@@ -251,7 +257,7 @@ mod tests {
 
         let ofile_pid = opath(p).unwrap().pop().unwrap();
 
-        assert_eq!(ofile_pid.0, std::process::id());
+        assert_eq!(u32::from(ofile_pid), std::process::id());
     }
 
     rusty_fork_test! {
@@ -265,7 +271,7 @@ mod tests {
                 eprintln!("Child pid: {}", child);
                 let pid = opath(&path).unwrap().pop().unwrap();
 
-                assert_eq!(pid.0, child.as_raw() as u32);
+                assert_eq!(pid.0, child.as_raw() as i32);
             },
             Ok(ForkResult::Child) => {
                 let mut f = File::create(&path).unwrap();
@@ -289,7 +295,7 @@ mod tests {
                 eprintln!("Child pid: {}", child);
                 let pid = opath(&path).unwrap().pop().unwrap();
 
-                assert_eq!(pid.0, child.as_raw() as u32);
+                assert_eq!(pid.0, child.as_raw() as i32);
             },
             Ok(ForkResult::Child) => {
                 let _dir = File::open(&path).unwrap();
@@ -307,16 +313,16 @@ mod tests {
         let sym = "/tmp/.symlink";
 
         {
-            std::fs::remove_file(orig);
-            std::fs::remove_file(sym);
-            let orig_file = File::create(orig).unwrap();
+            std::fs::remove_file(orig).unwrap();
+            std::fs::remove_file(sym).unwrap();
+            let _orig_file = File::create(orig).unwrap();
             symlinkat(orig, None, sym).unwrap();
         }
 
-        let sym_file = File::open(sym).unwrap();
+        let _sym_file = File::open(sym).unwrap();
 
         let ofile_pid = opath(orig).unwrap().pop().unwrap();
 
-        assert_eq!(ofile_pid.0, std::process::id());
+        assert_eq!(u32::from(ofile_pid), std::process::id());
     }
 }
