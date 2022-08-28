@@ -4,22 +4,30 @@ use std::path::{Path, PathBuf};
 
 use error_chain;
 use glob::glob;
-use log::{trace, info};
+use log::{info};
 use nix::sys::stat::{lstat, SFlag};
 
 /// Newtype pattern to avoid type errors.
 /// https://www.gnu.org/software/libc/manual/html_node/Process-Identification.html
-#[derive(Debug, Clone, Copy)]
-pub struct Pid(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Pid(i32);
 
 #[derive(Debug)]
 struct Inode(u64);
 
-impl From<Pid> for u32 {
-    fn from(pid: Pid) -> u32 {
+impl From<Pid> for i32 {
+    fn from(pid: Pid) -> i32 {
         pid.0
     }
 }
+
+impl From<Pid> for u32 {
+    fn from(pid: Pid) -> u32 {
+        use std::convert::*;
+        u32::try_from(pid.0).unwrap()
+    }
+}
+
 
 impl Inode {
     pub fn contained_in(&self, other: &str) -> bool {
@@ -57,19 +65,6 @@ macro_rules! unwrap_or_continue {
     }};
 }
 
-//fn extract_pid_from_proc<P: AsRef<Path>>(proc_entry: P) -> Result<Pid> {
-//
-//    let vec: Vec<&str> = proc_entry.as_os_string()?
-//                        .split('/')
-//                        .collect();
-//
-//    eprintln!("vec: {:?}", vec);
-//    Ok(Pid(0))
-////                        .collect::<Vec<&str>>()[2]
-////                        .parse::<u32>().unwrap();
-////            pids.push(Pid(pid));
-//}
-
 /// Given a single `line` from `/proc/net/unix`, return the Inode.
 ///
 /// See man 5 proc.
@@ -82,7 +77,7 @@ fn extract_socket_inode(line: &str) -> Result<Inode> {
 
 /// Search `/proc/net/unix` for the line containing `path_buf` and return the inode given
 /// by the system.
-fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
+fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Option<Inode>> {
     let f = File::open("/proc/net/unix")?;
     let f = BufReader::new(f);
 
@@ -91,98 +86,96 @@ fn socket_file_to_inode(path_buf: &PathBuf) -> Result<Inode> {
             info!("line: {:?}", l);
             if l.contains(path_buf.to_str().unwrap()) {
                 let inode = extract_socket_inode(&l)?;
-                return Ok(inode);
+                return Ok(Some(inode));
             }
         }
     }
 
-    Err(Error::from_kind(ErrorKind::InodeNotFound(
-        path_buf.to_str().unwrap().to_string(),
-    )))
+    Ok(None)
+}
+
+fn lookup_pids<F>(pids: &mut Vec<Pid>, matcher: F)
+where
+    F: Fn(&PathBuf) -> bool,
+{
+    for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
+        let e = unwrap_or_continue!(entry);
+        let real = unwrap_or_continue!(fs::read_link(&e));
+
+        if matcher(&real) {
+            let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
+            let pid = unwrap_or_continue!(pbuf.parse::<i32>());
+            pids.push(Pid(pid));
+            info!("process: {:?} -> real: {:?}", pid, real);
+        }
+    }
+}
+
+/// Returns the PIDs that currently have the given file or directory open.
+pub fn ofile<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
+    let mut pids: Vec<Pid> = Vec::new();
+    let mut target_path = PathBuf::new();
+    target_path.push(fs::canonicalize(&path)?);
+    lookup_pids(&mut pids, |real| *real == target_path);
+    return Ok(pids);
+}
+
+/// Returns the PIDs attached to the given socket.
+pub fn osocket<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
+    let mut pids: Vec<Pid> = Vec::new();
+    let mut target_path = PathBuf::new();
+    target_path.push(fs::canonicalize(&path)?);
+    let inode = match socket_file_to_inode(&target_path)? {
+        Some(inode) => inode,
+        None => return Ok(pids),
+    };
+    info!("inode: {:?}", inode);
+    lookup_pids(&mut pids, |real| {
+        inode.contained_in(&real.as_path().display().to_string())
+    });
+    return Ok(pids);
 }
 
 /// Given a file path, return the process id of any processes that have an open file descriptor
 /// pointing to the given file.
 pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     let mut path_buf = PathBuf::new();
-    path_buf.push(path);
+    path_buf.push(&path);
     let mut pids: Vec<Pid> = Vec::new();
     let stat_info = lstat(&path_buf)?;
     info!("stat info: {:?}", stat_info);
 
-    let mut target_path = PathBuf::new();
-    target_path.push(fs::canonicalize(&path_buf)?);
-    info!("Target path: {:?}", target_path);
-
-    // FIXME: not sure what the *right* way to do this is. Revisit later.
     if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFREG.bits() {
         info!("stat info reg file: {:?}", stat_info.st_mode);
-        for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
-            let e = unwrap_or_continue!(entry);
-            let real = unwrap_or_continue!(fs::read_link(&e));
-
-            if real == target_path {
-                let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
-                let pid = unwrap_or_continue!(pbuf.parse::<u32>());
-                pids.push(Pid(pid));
-                info!("process: {:?} -> real: {:?}", pid, real);
-            }
-        }
+        pids.extend(ofile(&path)?);
     } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFSOCK.bits() {
         info!("stat info socket file: {:?}", stat_info.st_mode);
-        let inode = socket_file_to_inode(&target_path)?;
-        info!("inode: {:?}", inode);
-        for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
-            let e = unwrap_or_continue!(entry);
-            let real = unwrap_or_continue!(fs::read_link(&e));
-            let real = real.as_path().display().to_string();
-            trace!("real: {:?} vs {}", real, inode.0);
-            if inode.contained_in(&real) {
-                info!("real found: {:?}", real);
-                let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
-                let pid = unwrap_or_continue!(pbuf.parse::<u32>());
-                pids.push(Pid(pid));
-            }
-        }
+        pids.extend(osocket(&path)?);
     } else if SFlag::S_IFMT.bits() & stat_info.st_mode == SFlag::S_IFDIR.bits() {
         info!("Got a directory!");
-        for entry in glob("/proc/*/fd/*").expect("Failed to read glob pattern") {
-            let e = unwrap_or_continue!(entry);
-            let real = unwrap_or_continue!(fs::read_link(&e));
-            trace!("Real: {:?}", real);
-
-            if real == target_path {
-                info!("Found target: {:?}", target_path);
-                let pbuf = e.to_str().unwrap().split('/').collect::<Vec<&str>>()[2];
-                let pid = unwrap_or_continue!(pbuf.parse::<u32>());
-                pids.push(Pid(pid));
-                info!("process: {:?} -> real: {:?}", pid, real);
-            }
-        }
+        pids.extend(ofile(&path)?);
     } else {
-        return Err(crate::ErrorKind::InodeNotFound(format!("Unknown file {:?}", stat_info)).into());
+        return Err(
+            crate::ErrorKind::InodeNotFound(format!("Unknown file {:?}", stat_info)).into(),
+        );
     }
-
     Ok(pids)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::opath;
-    use super::Inode;
+    use super::*;
     use std::fs::File;
     use std::io::Write;
-    use std::process::Command;
     use std::thread;
     use std::time::Duration;
 
-    use env_logger;
+    use nix::unistd::symlinkat;
     use nix::unistd::{fork, ForkResult};
     use rusty_fork::rusty_fork_id;
     use rusty_fork::rusty_fork_test;
     use rusty_fork::rusty_fork_test_name;
     use tempfile::{NamedTempFile, TempDir};
-    use nix::unistd::symlinkat;
 
     // TODO: test socket file, fifo
 
@@ -194,34 +187,27 @@ mod tests {
         assert!(inode.contained_in(buf));
     }
 
-    rusty_fork_test! {
     #[test]
-    fn test_ofile_other_process_unix_socket() {
-        env_logger::init();
+    fn test_ofile_unix_socket() {
         let path = "/tmp/.opath_socket";
+        std::fs::remove_file(&path).unwrap_or(());
 
-        match fork() {
-            Ok(ForkResult::Parent { child, .. }) => {
-                eprintln!("Child pid: {}", child);
-                let mut spawn = Command::new("nc")
-                                .arg("-U")
-                                .arg(&path)
-                                .arg("-l")
-                                .spawn()
-                                .unwrap();
-                thread::sleep(Duration::from_millis(500));
-                let pid = opath(&path).unwrap().pop().unwrap();
+        let sock = nix::sys::socket::socket(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Datagram,
+            nix::sys::socket::SockFlag::empty(),
+            None,
+        )
+        .unwrap();
+        nix::sys::socket::bind(sock, &nix::sys::socket::SockAddr::new_unix(path).unwrap()).unwrap();
+        let pid = opath(&path).unwrap().pop().unwrap();
+        assert_eq!(opath(&path).unwrap().len(), 1);
 
-                assert_eq!(pid.0, spawn.id() as u32);
-                spawn.kill().unwrap();
-                std::fs::remove_file(&path).unwrap();
-            },
-            Ok(ForkResult::Child) => {
-                thread::sleep(Duration::from_millis(5000));
-            },
-            Err(_) => panic!("Fork failed"),
-        }
-    }
+        assert_eq!(i32::from(pid), std::process::id() as i32);
+        nix::unistd::close(sock).unwrap();
+        drop(sock);
+        assert_eq!(opath(&path).unwrap().len(), 0);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
@@ -233,7 +219,34 @@ mod tests {
 
         let ofile_pid = opath(p).unwrap().pop().unwrap();
 
-        assert_eq!(ofile_pid.0, std::process::id());
+        assert_eq!(u32::from(ofile_pid), std::process::id());
+    }
+
+    #[test]
+    fn test_non_existant_file_basic() {
+        let p = "/tmp/non-existant-file";
+        match opath(p) {
+            Ok(_) => unreachable!(),
+            Err(e) => assert_eq!(
+                format!("{:?}", e),
+                "Error(Nix(Sys(ENOENT)), State { next_error: None, backtrace: InternalBacktrace })"
+            ),
+        };
+        match osocket(p) {
+            Ok(_) => unreachable!(),
+            Err(e) => assert_eq!(format!("{:?}", e), "Error(Io(Os { code: 2, kind: NotFound, message: \"No such file or directory\" }), State { next_error: None, backtrace: InternalBacktrace })"),
+        };
+    }
+
+    #[test]
+    fn test_not_a_socket() {
+        let p = "/tmp/.not_a_socket";
+        std::fs::write(p, "foo").unwrap();
+        match osocket(p) {
+            Ok(pids) => assert_eq!(pids.len(), 0),
+            Err(_e) => unreachable!(),
+        };
+        std::fs::remove_file(&p).unwrap();
     }
 
     #[test]
@@ -244,7 +257,7 @@ mod tests {
 
         let ofile_pid = opath(p).unwrap().pop().unwrap();
 
-        assert_eq!(ofile_pid.0, std::process::id());
+        assert_eq!(u32::from(ofile_pid), std::process::id());
     }
 
     rusty_fork_test! {
@@ -258,7 +271,7 @@ mod tests {
                 eprintln!("Child pid: {}", child);
                 let pid = opath(&path).unwrap().pop().unwrap();
 
-                assert_eq!(pid.0, child.as_raw() as u32);
+                assert_eq!(pid.0, child.as_raw() as i32);
             },
             Ok(ForkResult::Child) => {
                 let mut f = File::create(&path).unwrap();
@@ -282,7 +295,7 @@ mod tests {
                 eprintln!("Child pid: {}", child);
                 let pid = opath(&path).unwrap().pop().unwrap();
 
-                assert_eq!(pid.0, child.as_raw() as u32);
+                assert_eq!(pid.0, child.as_raw() as i32);
             },
             Ok(ForkResult::Child) => {
                 let _dir = File::open(&path).unwrap();
@@ -300,16 +313,16 @@ mod tests {
         let sym = "/tmp/.symlink";
 
         {
-            std::fs::remove_file(orig);
-            std::fs::remove_file(sym);
-            let orig_file = File::create(orig).unwrap();
+            std::fs::remove_file(orig).unwrap();
+            std::fs::remove_file(sym).unwrap();
+            let _orig_file = File::create(orig).unwrap();
             symlinkat(orig, None, sym).unwrap();
         }
 
-        let sym_file = File::open(sym).unwrap();
+        let _sym_file = File::open(sym).unwrap();
 
         let ofile_pid = opath(orig).unwrap().pop().unwrap();
 
-        assert_eq!(ofile_pid.0, std::process::id());
+        assert_eq!(u32::from(ofile_pid), std::process::id());
     }
 }
