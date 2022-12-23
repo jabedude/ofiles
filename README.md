@@ -17,6 +17,6 @@ let mut pids = opath("/path/to/a/file-or-directory").unwrap();
 
 // Now we have a Vec of process ID's that have the `/path/to/a/file-or-directory` open
 for pid in pids {
-    println!("Process {} has {} open!", pid, "/path/to/a/file-or-directory");
+    println!("Process {:?} has {} open!", pid, "/path/to/a/file-or-directory");
 }
 ```
