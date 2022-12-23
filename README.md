@@ -13,10 +13,11 @@ Example:
 ```rust
 use ofiles::opath;
 
-let mut pids = opath("/path/to/a/file-or-directory").unwrap();
+let path = "/path/to/a/file-or-directory";
+let pids = opath(path).unwrap();
 
 // Now we have a Vec of process ID's that have the `/path/to/a/file-or-directory` open
 for pid in pids {
-    println!("Process {} has {} open!", pid, "/path/to/a/file-or-directory");
+    println!("Process {:?} has {} open!", pid, path);
 }
 ```
