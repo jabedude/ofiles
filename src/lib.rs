@@ -9,6 +9,8 @@ pub struct Pid(u32);
 #[derive(Debug)]
 struct Inode(u64);
 
+mod macos;
+
 impl From<Pid> for u32 {
     fn from(pid: Pid) -> u32 {
         pid.0
@@ -51,15 +53,14 @@ macro_rules! unwrap_or_continue {
     }};
 }
 
-pub fn opath<P: AsRef<Path>>(_path: P) -> Result<Vec<Pid>> {
+pub fn opath<P: AsRef<Path>>(path: P) -> Result<Vec<Pid>> {
     #[cfg(target_os = "macos")]
     {
-        let pids: Vec<Pid> = Vec::new();
-        Ok(pids)
+        macos::opath(path)
     }
     #[cfg(target_os = "linux")]
     {
-        linux::opath(_path)
+        linux::opath(path)
     }
 }
 
